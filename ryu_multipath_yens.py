@@ -16,7 +16,7 @@ from ryu.lib.packet import ether_types
 from ryu.lib import mac
 from ryu.lib import hub
 from ryu.lib import ip
-from ryu.topology.api import get_switch, get_link
+from ryu.topology.api import get_switch, get_link, get_all_link
 from ryu.app.wsgi import ControllerBase
 from ryu.topology import event
 
@@ -24,6 +24,7 @@ from collections import defaultdict
 from operator import itemgetter
 
 import os
+import numpy as np
 import random
 import time
 
@@ -48,6 +49,7 @@ class ProjectController(app_manager.RyuApp):
         self.multipath_group_ids = {}
         self.group_ids = []
         self.adjacency = defaultdict(dict)
+        self.delay_matrix = []
         self.bandwidths = defaultdict(lambda: defaultdict(lambda: DEFAULT_BW))
 
         # Fake addresses only known to the controller
@@ -64,11 +66,12 @@ class ProjectController(app_manager.RyuApp):
             Monitors link latency between two switches.
             Sends ping packet every 0.5 second.
         '''
+
         while True:
             self.send_ping_packet(s1, s2)
 
-            hub.sleep(0.5)
-
+            # print 'delay matrix = \n' + str(np.matrix(self.delay_matrix))
+            hub.sleep(2)            
         self.logger.info('Stop monitoring link %s %s' % (s1.dpid, s2.dpid))
 
     def monitor_link_controller(self, s1):
@@ -79,7 +82,7 @@ class ProjectController(app_manager.RyuApp):
         while True:
             self.send_ping_packet_controller(s1)
 
-            hub.sleep(0.5)
+            hub.sleep(2)
 
 
     def send_ping_packet_controller(self, s1):
@@ -136,6 +139,7 @@ class ProjectController(app_manager.RyuApp):
                                    src=self.controller_ip,
                                    dst=dst_ip))
         echo_payload = '%s;%s;%f' % (s1.dpid, s2.dpid, time.time())
+        # print 'echo_payload = ' +str(echo_payload)
         payload = icmp.echo(data=echo_payload)
         pkt.add_protocol(icmp.icmp(data=payload))
         pkt.serialize()
@@ -159,11 +163,13 @@ class ProjectController(app_manager.RyuApp):
         echo_payload = icmp_packet.data
         payload = echo_payload.data
         info = payload.split(';')
+        # print 'info = ' + str(info)
         s1 = info[0]
-        s2 = info[1]
+        s2 = info[1] 
         latency = (time.time() - float(info[2])) * 1000  # in ms
         # print "s%s to s%s latency = %f ms" % (s1, s2, latency)
-        self.delay[int(s1)][int(s2)] = latency
+        self.delay_matrix[int(s1)][int(s2)]=round(latency,3)
+        self.delay[int(s1)][int(s2)] = round(latency,3)
     
     def minimum_distance(self, distance, Q):
         min = float('Inf')
@@ -203,21 +209,20 @@ class ProjectController(app_manager.RyuApp):
     
         distances[node_start]=0
         Q=set(self.switches)
-    
         while len(Q)>0:
             u = self.minimum_distance(distances, Q)
             Q.remove(u)  
-    
+           
             for p in self.switches:
-                if graph[u][p]!=None:
+                if p in graph[u]:
                     w = self.delay[u][p] 
                     if distances[u] + w < distances[p]:
                         distances[p] = distances[u] + w
                         previous[p] = u
-    
+
         if node_end:
             return {'cost': distances[node_end],
-                    'path': path(previous, node_start, node_end)}
+                    'path': self.path(previous, node_start, node_end)}
         else:
             return (distances, previous)
     
@@ -228,7 +233,7 @@ class ProjectController(app_manager.RyuApp):
         
         distances, previous = self.dijkstra(self.adjacency,src)
         A = [{'cost': distances[dst],
-                'path': path(previous, src, dst)}]
+                'path': self.path(previous, src, dst)}]
         B = []
         #print "distances=", distances
         #print  "previous=", previous
@@ -281,7 +286,7 @@ class ProjectController(app_manager.RyuApp):
         tmp=[]
         print "YenKSP->"
         for path_k in A:
-            print path_k
+            print 'Path[ (host %s) --> (host %s) ] : %s' %(src,dst,str(path_k))
             tmp.append(path_k)
     
         return map(lambda x: x['path'], A)
@@ -383,7 +388,7 @@ class ProjectController(app_manager.RyuApp):
                 )
 
                 out_ports = ports[in_port]
-                print out_ports 
+                # print out_ports 
 
                 if len(out_ports) > 1:
                     group_id = None
@@ -506,6 +511,7 @@ class ProjectController(app_manager.RyuApp):
 
         if arp_pkt:
             # print dpid, pkt
+            print '***************arp packet****************'           
             src_ip = arp_pkt.src_ip
             dst_ip = arp_pkt.dst_ip
             if arp_pkt.opcode == arp.ARP_REPLY:
@@ -540,10 +546,13 @@ class ProjectController(app_manager.RyuApp):
     def switch_enter_handler(self, event):
         switch = event.switch.dp
         ofp_parser = switch.ofproto_parser
+        self.delay_matrix = [[0 for row in range(
+            len(self.switches)+2)] for col in range(len(self.switches)+2)]
 
         if switch.id not in self.switches:
             self.switches.append(switch.id)
             self.datapath_list[switch.id] = switch
+            print self.switches
 
             # Request port/link descriptions, useful for obtaining bandwidth
             req = ofp_parser.OFPPortDescStatsRequest(switch)
@@ -563,7 +572,7 @@ class ProjectController(app_manager.RyuApp):
     def link_add_handler(self, event):
         s1 = event.link.src
         s2 = event.link.dst
-        self.adjacency[s1.dpid][s2.dpid] = s1.port_no
+        self.adjacency[s1.dpid][s2.dpid] = s1.port_no 
         self.adjacency[s2.dpid][s1.dpid] = s2.port_no
         hub.spawn(self.monitor_link, s1, s2)
 

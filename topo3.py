@@ -32,15 +32,30 @@ def myNetwork():
     info( '*** Add hosts\n')
     h2 = net.addHost('h2', cls=Host, ip='10.0.0.2', defaultRoute=None)
     h1 = net.addHost('h1', cls=Host, ip='10.0.0.1', defaultRoute=None)
-
+    h3 = net.addHost('h3', cls=Host, ip='10.0.0.3', defaultRoute=None)
+    h4 = net.addHost('h4', cls=Host, ip='10.0.0.4', defaultRoute=None)
     info( '*** Add links\n')
     net.addLink(s1, s2,cls=TCLink, bw=5)
+    net.addLink(s1, h3,cls=TCLink, bw=5)
     net.addLink(s2, s5,cls=TCLink, bw=5)
+    net.addLink(h4, s5,cls=TCLink, bw=5)
     net.addLink(s3, s1,cls=TCLink, bw=5)
     net.addLink(s1, h1,cls=TCLink, bw=5)
     net.addLink(s5, h2,cls=TCLink, bw=5)
     net.addLink(s3, s4,cls=TCLink, bw=5)
     net.addLink(s4, s5,cls=TCLink, bw=5)
+
+
+    # net.addLink(s1, s2,cls=TCLink)
+    # net.addLink(s1, h3,cls=TCLink)
+    # net.addLink(s2, s5,cls=TCLink)
+    # net.addLink(h4, s5,cls=TCLink)
+    # net.addLink(s3, s1,cls=TCLink)
+    # net.addLink(s1, h1,cls=TCLink)
+    # net.addLink(s5, h2,cls=TCLink)
+    # net.addLink(s3, s4,cls=TCLink)
+    # net.addLink(s4, s5,cls=TCLink)
+
 
     info( '*** Starting network\n')
     net.build()

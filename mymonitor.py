@@ -1,51 +1,90 @@
-from operator import attrgetter
-
-from ryu.app import simple_switch_13
-from ryu.controller.handler import set_ev_cls
+from ryu.base import app_manager
+from ryu.controller import mac_to_port
 from ryu.controller import ofp_event
-from ryu.controller.handler import MAIN_DISPATCHER,DEAD_DISPATCHER
+from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER,DEAD_DISPATCHER
+from ryu.controller.handler import set_ev_cls
+from ryu.ofproto import ofproto_v1_3
+from ryu.lib.mac import haddr_to_bin
+from ryu.lib.packet import in_proto
+from ryu.lib.packet import packet
+from ryu.lib.packet import ethernet
+from ryu.lib.packet import arp
+from ryu.lib.packet import ipv4
+from ryu.lib.packet import ipv6
+from ryu.lib.packet import icmp
+from ryu.lib.packet import ether_types
+from ryu.lib import mac
 from ryu.lib import hub
+from ryu.lib import ip
+from ryu.topology.api import get_switch, get_link, get_all_link
+from ryu.app.wsgi import ControllerBase
+from ryu.topology import event
+from ryu.app import simple_switch_stp_13
+from collections import defaultdict
+from operator import itemgetter, attrgetter
 
-class MyMonitor(simple_switch_13.SimpleSwitch13):    #simple_switch_13 is same as the last experiment which named self_learn_switch
+import os
+import copy
+import sys
+import numpy as np
+import random
+import time
+
+REFERENCE_BW = 10000000
+class MyMonitor(simple_switch_stp_13.SimpleSwitch13):    #simple_switch_13 is same as the last experiment which named self_learn_switch
     '''
     design a class to achvie managing the quantity of flow
     '''
 
     def __init__(self,*args,**kwargs):
         super(MyMonitor,self).__init__(*args,**kwargs)
-        self.datapaths = {}
-        #use gevent to start monitor
-        self.monitor_thread = hub.spawn(self._monitor)
+        self.mac_to_port = {}
+        self.topology_api_app = self
+        self.datapath_list = {}
+        self.arp_table = {}
+        self.switches = []
+        self.hosts = {}
+        self.multipath_group_ids = {}
+        self.group_ids = []
+        self.adjacency = defaultdict(dict)
+        self.delay_matrix = []
+        self.bandwidths = defaultdict(lambda: defaultdict(lambda: 10000000))
+        # Bandwidth Monitor
+        self.switch_port_to_switch = []
+        self.linkbw_matrix = []
+        self.tmp_linkbw_matrix = []
+        self.linkbw_matrix_old = []
+        self.rbw_matrix = []
+        self.monitor_thread = hub.spawn(self._bw_monitor)
 
-    @set_ev_cls(ofp_event.EventOFPStateChange,[MAIN_DISPATCHER,DEAD_DISPATCHER])
-    def _state_change_handler(self,ev):
-        '''
-        design a handler to get switch state transition condition
-        '''
-        #first get ofprocotol info
-        datapath = ev.datapath
-        ofproto = datapath.ofproto
-        ofp_parser = datapath.ofproto_parser
-
-        #judge datapath`s status to decide how to operate
-        if datapath.state == MAIN_DISPATCHER:    #should save info to dictation 
-            if datapath.id not in self.datapaths:
-                self.datapaths[datapath.id] = datapath
-                self.logger.debug("Regist datapath: %16x",datapath.id)
-        elif datapath.state == DEAD_DISPATCHER:    #should remove info from dictation
-            if datapath.id in self.datapaths:
-                del self.datapaths[datapath.id]
-                self.logger.debug("Unregist datapath: %16x",datapath.id)
-
-
-    def _monitor(self):
-        '''
-        design a monitor on timing system to request switch infomations about port and flow
-        '''
-        while True:    #initiatie to request port and flow info all the time
-            for dp in self.datapaths.values():
+    def _bw_monitor(self):
+        while True:
+            for dp in self.datapath_list.values():
+                # print 'dp = ' + str(dp)
                 self._request_stats(dp)
-            hub.sleep(5)    #pause to sleep to wait reply, and gave time to other gevent to request
+
+            self.get_switch_port_to_switch_mapping()
+            self.get_linkbw_matrix()
+
+            hub.sleep(2)
+
+    
+
+    def get_switch_port_to_switch_mapping(self):
+        for link in get_all_link(self):
+            if link.src.port_no != 4294967294:
+                # print 'link.src.dpid = ' + str(link.src.dpid) + ',link.src.port = ' + str(link.src.port_no) + 'link.dst.dpid = ' + str(link.dst.dpid)
+                self.switch_port_to_switch[link.src.dpid][link.src.port_no] = link.dst.dpid
+                self.switch_port_to_switch[link.dst.dpid][link.dst.port_no] = link.src.dpid
+
+    def get_linkbw_matrix(self):
+        len1 = len(self.linkbw_matrix)
+        self.rbw_matrix = np.full((len1,len1),REFERENCE_BW)
+        self.linkbw_matrix_old = np.copy(self.linkbw_matrix)
+        self.linkbw_matrix = np.copy(self.tmp_linkbw_matrix)
+        LINKBW_MATRIX = self.linkbw_matrix - self.linkbw_matrix_old
+        print 'LINKBW_MATRIX = \n' + str(LINKBW_MATRIX)
+        self.rbw_matrix = self.rbw_matrix - LINKBW_MATRIX
 
     def _request_stats(self,datapath):
         '''
@@ -65,54 +104,49 @@ class MyMonitor(simple_switch_13.SimpleSwitch13):    #simple_switch_13 is same a
 
     @set_ev_cls(ofp_event.EventOFPPortStatsReply,MAIN_DISPATCHER)
     def _port_stats_reply_handler(self,ev):
-        '''
-        monitor to require the port state, then this function is to get infomation for port`s info
-        print("6666666666port info:")
-        print(ev.msg)
-        print(dir(ev.msg))
-        '''
+        switch = ev.msg.datapath
         body = ev.msg.body
-        self.logger.info('datapath             port     '
-                        'rx_packets            tx_packets'
-                        'rx_bytes            tx_bytes'
-                        'rx_errors            tx_errors'
-                        )
-        self.logger.info('---------------    --------'
-                        '--------    --------'
-                        '--------    --------'
-                        '--------    --------'
-                        )
-        for port_stat in sorted(body,key=attrgetter('port_no')):
-                self.logger.info('%016x %8x %8d %8d %8d %8d %8d %8d',
-                    ev.msg.datapath.id,port_stat.port_no,port_stat.rx_packets,port_stat.tx_packets,
-                    port_stat.rx_bytes,port_stat.tx_bytes,port_stat.rx_errors,port_stat.tx_errors
-                        )
+        
+        for stat in sorted(body,key=attrgetter('port_no')):
+                if stat.port_no != 4294967294 and self.switch_port_to_switch[switch.id][stat.port_no] != 0:
+                    self.tmp_linkbw_matrix[switch.id][self.switch_port_to_switch[switch.id]
+                                                  [stat.port_no]] = stat.tx_bytes
 
 
-    @set_ev_cls(ofp_event.EventOFPFlowStatsReply,MAIN_DISPATCHER)
-    def _flow_stats_reply_handler(self,ev):
-        '''
-        monitor to require the flow state, then this function is to get infomation for flow`s info
-        print("777777777flow info:")
-        print(ev.msg)
-        print(dir(ev.msg))
-        '''
-        body = ev.msg.body
+    @set_ev_cls(event.EventSwitchEnter)
+    def switch_enter_handler(self, event):
+        switch = event.switch.dp
+        ofp_parser = switch.ofproto_parser
+        
+        if switch.id not in self.switches:
+            self.switches.append(switch.id)
+            self.datapath_list[switch.id] = switch
+            print self.switches
 
-        self.logger.info('datapath             '
-                        'in_port            eth_src'
-                        'out_port            eth_dst'
-                        'packet_count        byte_count'
-                        )
-        self.logger.info('---------------    '
-                        '----    -----------------'
-                        '----    -----------------'
-                        '---------    ---------'
-                        )
-        for flow_stat in sorted([flow for flow in body if flow.priority==1],
-                        key=lambda flow:(flow.match['in_port'],flow.match['eth_src'])):
-                self.logger.info('%016x    %8x    %17s    %8x    %17s    %8d    %8d',
-                    ev.msg.datapath.id,flow_stat.match['in_port'],flow_stat.match['eth_src'],
-                    flow_stat.instructions[0].actions[0].port,flow_stat.match['eth_dst'],
-                    flow_stat.packet_count,flow_stat.byte_count
-                        )
+            # Request port/link descriptions, useful for obtaining bandwidth
+            req = ofp_parser.OFPPortDescStatsRequest(switch)
+            switch.send_msg(req)
+
+        # For Bandwidth Monitor Init
+        self.switch_port_to_switch = [[0 for row in range(
+            len(self.switches)+1)] for col in range(len(self.switches)+1)]
+
+    @set_ev_cls(event.EventSwitchLeave, MAIN_DISPATCHER)
+    def switch_leave_handler(self, event):
+        print event
+        switch = event.switch.dp.id
+        if switch in self.switches:
+            del self.switches[switch]
+            del self.datapath_list[switch]
+            del self.adjacency[switch]
+
+    @set_ev_cls(event.EventLinkAdd, MAIN_DISPATCHER)
+    def link_add_handler(self, event):
+        s1 = event.link.src
+        s2 = event.link.dst
+        self.adjacency[s1.dpid][s2.dpid] = s1.port_no
+        self.adjacency[s2.dpid][s1.dpid] = s2.port_no
+
+    @set_ev_cls(event.EventLinkDelete, MAIN_DISPATCHER)
+    def link_delete_handler(self, event):
+        return

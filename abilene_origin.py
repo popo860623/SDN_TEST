@@ -24,17 +24,17 @@ class GeneratedTopo( Topo ):
 
         # add nodes
         # switches first
-        NewYork = self.addSwitch( 's1' , cls=OVSKernelSwitch)
-        Chicago = self.addSwitch( 's2' , cls=OVSKernelSwitch)
-        WashingtonDC = self.addSwitch( 's3' , cls=OVSKernelSwitch)
-        Seattle = self.addSwitch( 's4' , cls=OVSKernelSwitch)
-        Sunnyvale = self.addSwitch( 's5' , cls=OVSKernelSwitch)
-        LosAngeles = self.addSwitch( 's6' , cls=OVSKernelSwitch)
-        Denver = self.addSwitch( 's7' , cls=OVSKernelSwitch)
-        KansasCity = self.addSwitch( 's8' , cls=OVSKernelSwitch)
-        Houston = self.addSwitch( 's9' , cls=OVSKernelSwitch)
-        Atlanta = self.addSwitch( 's10' , cls=OVSKernelSwitch)
-        Indianapolis = self.addSwitch( 's11' , cls=OVSKernelSwitch)
+        NewYork = self.addSwitch( 's1' , cls=OVSKernelSwitch, dpid='0000000000000001')
+        Chicago = self.addSwitch( 's2' , cls=OVSKernelSwitch, dpid='0000000000000002')
+        WashingtonDC = self.addSwitch( 's3' , cls=OVSKernelSwitch, dpid='0000000000000003')
+        Seattle = self.addSwitch( 's4' , cls=OVSKernelSwitch, dpid='0000000000000004')
+        Sunnyvale = self.addSwitch( 's5' , cls=OVSKernelSwitch, dpid='0000000000000005')
+        LosAngeles = self.addSwitch( 's6' , cls=OVSKernelSwitch, dpid='0000000000000006')
+        Denver = self.addSwitch( 's7' , cls=OVSKernelSwitch, dpid='0000000000000007')
+        KansasCity = self.addSwitch( 's8' , cls=OVSKernelSwitch, dpid='0000000000000008')
+        Houston = self.addSwitch( 's9' , cls=OVSKernelSwitch, dpid='0000000000000009')
+        Atlanta = self.addSwitch( 's10' , cls=OVSKernelSwitch, dpid='0000000000000010')
+        Indianapolis = self.addSwitch( 's11' , cls=OVSKernelSwitch, dpid='0000000000000011')
 
         # and now hosts
         NewYork_host = self.addHost( 'h0' )

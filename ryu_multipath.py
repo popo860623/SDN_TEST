@@ -46,8 +46,10 @@ class ProjectController(app_manager.RyuApp):
         self.multipath_group_ids = {}
         self.group_ids = []
         self.adjacency = defaultdict(dict)
+        self.M_u_v = defaultdict(dict)
         self.bandwidths = defaultdict(lambda: defaultdict(lambda: DEFAULT_BW))
         self.linkbw_matrix = []
+        self.rbw_matrix = []
         self.tmp_linkbw_matrix = []
         self.linkbw_matrix_old = []
         self.switch_port_to_switch = []
@@ -62,7 +64,7 @@ class ProjectController(app_manager.RyuApp):
             self.get_switch_port_to_switch_mapping()
             self.get_linkbw_matrix()
 
-            hub.sleep(2)
+            hub.sleep(1)
 
     def get_switch_port_to_switch_mapping(self):
         for link in get_all_link(self):
@@ -72,10 +74,14 @@ class ProjectController(app_manager.RyuApp):
                 self.switch_port_to_switch[link.dst.dpid][link.dst.port_no] = link.src.dpid
 
     def get_linkbw_matrix(self):
+        len1 = len(self.linkbw_matrix)
+        self.rbw_matrix = np.full((len1,len1),10000000)
         self.linkbw_matrix_old = np.copy(self.linkbw_matrix)
         self.linkbw_matrix = np.copy(self.tmp_linkbw_matrix)
-        print 'LINKBW_MATRIX = \n' + str(np.matrix(self.linkbw_matrix) - np.matrix(self.linkbw_matrix_old))
-        
+        LINKBW_MATRIX = self.linkbw_matrix - self.linkbw_matrix_old
+        print 'LINKBW_MATRIX = \n' + str(LINKBW_MATRIX)
+        self.rbw_matrix = self.rbw_matrix - LINKBW_MATRIX
+        print 'RBW_MATRIX = \n' + str(self.rbw_matrix)     
         
     def _request_stats(self, datapath):
         '''
@@ -115,7 +121,6 @@ class ProjectController(app_manager.RyuApp):
             if stat.port_no != 4294967294 and self.switch_port_to_switch[switch.id][stat.port_no] != 0:
                 self.tmp_linkbw_matrix[switch.id][self.switch_port_to_switch[switch.id]
                                               [stat.port_no]] = stat.tx_bytes
-
                 # self.logger.info('%016x %8x %8d %8d %8d %8d %8d %8d',
                 #                 switch.id, stat.port_no,
                 #                 stat.rx_packets, stat.rx_bytes, stat.rx_errors,
@@ -151,11 +156,8 @@ class ProjectController(app_manager.RyuApp):
         # adjacency[s2][s1] = s2.port_no
         e1 = self.adjacency[s1][s2]
         e2 = self.adjacency[s2][s1]
-        # bl = min(self.bandwidths[s1][e1], self.bandwidths[s2][e2])
-        bl = self.bandwidths[s1][e1] + self.bandwidths[s2][e2]
-        # print 'get link cost bl  =  ' + str(bl)
-        # ew = CAPACITY/bl
-        ew = bl / CAPACITY
+        ew = 10.0/self.rbw_matrix[e1][e2]
+
         return ew
 
     def get_path_cost(self, path):
@@ -208,7 +210,7 @@ class ProjectController(app_manager.RyuApp):
         pw = []
         for path in paths:
             pw.append(self.get_path_cost(path))
-            print path, "cost = ", pw[len(pw) - 1]
+            print path, "COST = ", pw[len(pw) - 1]
         sum_of_pw = sum(pw) * 1.0
         paths_with_ports = self.add_ports_to_paths(
             paths, first_port, last_port)
@@ -437,6 +439,8 @@ class ProjectController(app_manager.RyuApp):
     def link_add_handler(self, ev):
         s1 = ev.link.src
         s2 = ev.link.dst
+        self.M_u_v[s1.dpid][s2.dpid] = 0;
+        self.M_u_v[s2.dpid][s1.dpid] = 0;
         self.adjacency[s1.dpid][s2.dpid] = s1.port_no
         self.adjacency[s2.dpid][s1.dpid] = s2.port_no
 
